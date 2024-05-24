@@ -17,9 +17,10 @@ from scipy.signal import find_peaks
 import numpy.polynomial.polynomial as poly # fit to calibration curve
 
 outDir = "/home/john/Documents/Spectrometer"  # directory for output data files
+titleString = "USB2000 Spectrum of Argon Bulb" # plot title
 
-integrationTime = 50000 # spectrometer integration time in microseconds
-averages = 2500          # how many spectra to average together
+integrationTime = 100000 # spectrometer integration time in microseconds
+averages = 100          # how many spectra to average together
 boxcar = 1             # boxcar-filter this many adjacent pixels (always odd)
 # xRange = (360, 1000)    # display this range in nm
 
@@ -31,8 +32,8 @@ pltHeight = 8
 #  peak-finding parameters
 wSize= 11  # rolling average window size
 pkSearchWin = 41 # array element range, must be odd
-pkStart = 500  # minimum wavelength peak of interest
-pkStop = 920   # maximum wavelength peak of interest
+pkStart = 360  # minimum wavelength peak of interest
+pkStop = 1020   # maximum wavelength peak of interest
 xRange = (pkStart, pkStop)    # display this range in nm
 
 
@@ -84,6 +85,21 @@ old_nm = np.array([538.87, 583.99, 613.03, 638.86, 666.37, 701.87,
 
 testIdx = np.array([533,668,756,835,920,1031,1098,1467,1603 ])
 
+# Literature values for selected argon emission lines (in nm)
+# https://physics.nist.gov/PhysRefData/Handbook/Tables/argontable2.htm
+argon_nm = np.array([696.5431, 738.3980, 750.3869, 763.5106, 811.5311, 842.4648, 912.2967 ])
+
+# selected mercury emission lines, in nm
+# https://www.rp-photonics.com/standard_spectral_lines.html
+# https://physics.nist.gov/PhysRefData/Handbook/Tables/mercurytable2_a.htm
+mercury_nm  = np.array([365.0153, 404.6563, 435.8328,  546.0735, 576.9598, 579.0663 ])
+mercury_idx = np.array([26, 138,  228, 550,  643, 649])
+
+cal_nm = np.array([365.0153, 404.6563, 435.8328, 540.05618, 546.0735, 585.24879, 614.30626, 640.2248,
+    667.82762, 703.24131, 724.51666, 837.7608, 878.06226    ])
+
+cal_idx = np.array([26, 138, 228, 533, 550, 668,756,835,920,1031,1098,1467,1603 ])
+
 def doPfit(x,y,n):
     coefs = poly.polyfit(x, y, n)
     x_new = np.linspace(x[0], x[-1], num=len(x)*500)
@@ -106,7 +122,8 @@ def doPfit(x,y,n):
 # get array of wavelengths in nm for each sensor pixel
 def get_nm():
     # y = Ac + Bx + Cx^2 + Dx^3
-    coefs = np.array([3.54859155e+02, 3.56950640e-01, -1.72680824e-05, -1.12499513e-09])
+    #coefs = np.array([3.54859155e+02, 3.56950640e-01, -1.72680824e-05, -1.12499513e-09])
+    coefs = np.array([ 3.55900745e+02, 3.54281751e-01, -1.50846947e-05, -1.70072117e-09 ])
     spIdx = np.linspace(0, 2047, 2048)
     nm = poly.polyval(spIdx, coefs)
     return (nm)
@@ -116,7 +133,8 @@ def get_nm():
 
 #doPfit(testIdx, neon_nm,3)
 #doPfit(testIdx, old_nm,3)
-# exit()
+#doPfit(cal_idx, cal_nm, 3)
+#exit()
 
 spec = Spectrometer.from_first_available()
 spec.integration_time_micros(integrationTime)
@@ -132,7 +150,7 @@ print("\nStarting baseline... ",end='')
 baseline = getSpec(int(1+averages/10), boxcar)  # get baseline reference
 print(" done. Running acquisition...")
 
-for j in range(2):
+for j in range(4):
 
     A = getSpec(averages, boxcar) - baseline
     As = np.sqrt(np.clip(A,0,4095))
@@ -147,7 +165,7 @@ for j in range(2):
 
     plt.xlim(xRange)
     plt.ylim(yRange)
-    plt.title("USB2000 Spectrum of Neon Bulb")
+    plt.title(titleString)
     plt.xlabel('wavelength, nm')
     plt.ylabel('sqrt(intensity)')
     plt.grid(axis='both', color='0.65', linestyle='dotted')
@@ -162,22 +180,30 @@ for j in range(2):
     aClip[0:idxStart] = 0
     aClip[idxStop:] = 0
 
-    pkI, _ = find_peaks(aClip, height=2, prominence=8, distance=50)
+    # pkI, _ = find_peaks(aClip, height=2, prominence=8, distance=50)
+    pkI, _ = find_peaks(aClip, height=5, prominence=8, distance=15)
     # pkI = ppeak2.nonzero()[0]
-    pk = As[pkI] + 1.05    # offset in graph Y units, to place above spectrum plot line, not on it
-    nmPk = nm[pkI]
-    plt.plot(nmPk, pk, "kv")
+    #pk = As[pkI] + 1.05    # offset in graph Y units, to place above spectrum plot line, not on it
+    #nmPk = nm[pkI]
+    # plt.plot(nmPk, pk, "kv")
     numFont = {'size': 8}
     rc('font', **numFont)
 
     for i in pkI:
         x = nm[i]
-        y = As[i] + (2.1 * 0.85)
-        y2 = As[i] + (2.1 * 1.25)
-        s = ("%5.1f" % x)
-        s2 = ("%d" % i)
+        ym = As[i] + 1.05 # offset in Y units to show maker above spectrum plot line, not on it
+        yOffset = 0
+        #if (abs(390-i) < 3):
+        #    continue
+        #if (abs(643-i) < 3):
+        #    yOffset = 2;
+        y = As[i] + (2.1 * 0.85) + yOffset
+        y2 = As[i] + (2.1 * 1.25) + yOffset
+        s2 = ("%5.1f nm" % x)
+        s = ("%d" % i)
         if (x > pkStart):
-            plt.text(x,y,s,horizontalalignment='center')
+            plt.plot(x, As[i] + 1.05, "kv") # peak marker
+            plt.text(x,y,s,horizontalalignment='center') # peak text
             plt.text(x,y2,s2,horizontalalignment='center')
 
     printPeaks(pkI, aClip, nm, pkStart, pkStop)
@@ -213,3 +239,5 @@ for j in range(2):
     print("%s , %5.1f, %5.1f, %5.1f" % (fnameOut, minAmp, avgAmp, maxAmp))
 
     time.sleep(0.1)
+
+
