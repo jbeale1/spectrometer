@@ -1,11 +1,15 @@
 # acquire spectrum from Ocean Optics USB200
-# and process data
-# 23-May-2024 J.Beale
+# and find peaks
+# 24-May-2024 J.Beale
+
+# https://www.researchgate.net/figure/Fluorescence-spectra-of-chlorophyll-a-l-max-650-nm-and-chlorophyll-b-l-max-670-nm_fig1_272366292
 
 import numpy as np
 from matplotlib import pyplot as plt 
 from matplotlib import rc
-from matplotlib.ticker import (MultipleLocator, AutoMinorLocator)
+# from matplotlib.ticker import (MultipleLocator, AutoMinorLocator)
+from matplotlib.ticker import AutoMinorLocator
+from matplotlib import cm
 
 from seabreeze.spectrometers import Spectrometer
 import time  # for time-date and real-time delay
@@ -17,23 +21,25 @@ from scipy.signal import find_peaks
 import numpy.polynomial.polynomial as poly # fit to calibration curve
 
 outDir = "/home/john/Documents/Spectrometer"  # directory for output data files
-titleString = "USB2000 Spectrum of Argon Bulb" # plot title
+titleString = "USB2000 : 6-inch F4T5-CW fluorescent bulb" # plot title
 
-integrationTime = 100000 # spectrometer integration time in microseconds
-averages = 100          # how many spectra to average together
+integrationTime = 15000 # spectrometer integration time in microseconds
+averages = 400          # how many spectra to average together
+cycles = 5            # total number of datasets to produce
+
 boxcar = 1             # boxcar-filter this many adjacent pixels (always odd)
 # xRange = (360, 1000)    # display this range in nm
 
 #yRange = (0, 4200)      # this range in intensity units (12-bit ADC)
 yRange = (0, 50)      # plot this range in intensity units (12-bit ADC)
-pltWidth = 18       # plot output window size, in inches?
+pltWidth = 22       # plot output window size, in inches?
 pltHeight = 8
 
 #  peak-finding parameters
 wSize= 11  # rolling average window size
 pkSearchWin = 41 # array element range, must be odd
-pkStart = 360  # minimum wavelength peak of interest
-pkStop = 1020   # maximum wavelength peak of interest
+pkStart = 359  # minimum wavelength peak of interest
+pkStop = 1000   # maximum wavelength peak of interest
 xRange = (pkStart, pkStop)    # display this range in nm
 
 
@@ -147,28 +153,36 @@ nm = get_nm()
 #plt.show()
 
 print("\nStarting baseline... ",end='')
-baseline = getSpec(int(1+averages/10), boxcar)  # get baseline reference
+baseline = getSpec(int(1+averages/2), boxcar)  # get baseline reference
 print(" done. Running acquisition...")
 
-for j in range(4):
+for j in range(cycles):
 
     A = getSpec(averages, boxcar) - baseline
     As = np.sqrt(np.clip(A,0,4095))
     #plt.clf()  # clear current plot figure
+    
     if plt.get_fignums(): # empty list is false
         plt.close()
 
+    fig, ax = plt.subplots()
+
     timeStamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
     # fig, ax = plt.subplots()
-    plt.figure(figsize=(pltWidth, pltHeight))
-    plt.plot(nm, As, linewidth=0.5) # show the spectrum plot
+    # plt.figure(figsize=(pltWidth, pltHeight))
+    fig.set_figheight(pltHeight)
+    fig.set_figwidth(pltWidth)
+    
 
-    plt.xlim(xRange)
-    plt.ylim(yRange)
-    plt.title(titleString)
-    plt.xlabel('wavelength, nm')
-    plt.ylabel('sqrt(intensity)')
-    plt.grid(axis='both', color='0.65', linestyle='dotted')
+    minor_locator = AutoMinorLocator(5)
+    ax.xaxis.set_minor_locator(minor_locator)
+
+    ax.set_xlim(xRange)
+    ax.set_ylim(yRange)
+    ax.set_title(titleString)
+    ax.set_xlabel('wavelength, nm')
+    ax.set_ylabel('sqrt(intensity)')
+    ax.plot(nm, As, linewidth=0.6, color='#000080') # show the spectrum plot
 
 
     # find peaks ============================
@@ -181,30 +195,33 @@ for j in range(4):
     aClip[idxStop:] = 0
 
     # pkI, _ = find_peaks(aClip, height=2, prominence=8, distance=50)
-    pkI, _ = find_peaks(aClip, height=5, prominence=8, distance=15)
+    pkI, _ = find_peaks(aClip, height=5, prominence=10, distance=3)
     # pkI = ppeak2.nonzero()[0]
     #pk = As[pkI] + 1.05    # offset in graph Y units, to place above spectrum plot line, not on it
     #nmPk = nm[pkI]
     # plt.plot(nmPk, pk, "kv")
-    numFont = {'size': 8}
+    numFont = {'size': 7}
     rc('font', **numFont)
 
     for i in pkI:
         x = nm[i]
         ym = As[i] + 1.05 # offset in Y units to show maker above spectrum plot line, not on it
-        yOffset = 0
+        yOffset = 0.2
         #if (abs(390-i) < 3):
         #    continue
-        #if (abs(643-i) < 3):
-        #    yOffset = 2;
-        y = As[i] + (2.1 * 0.85) + yOffset
-        y2 = As[i] + (2.1 * 1.25) + yOffset
-        s2 = ("%5.1f nm" % x)
-        s = ("%d" % i)
+        if (abs(577-x) < 1.5):
+            yOffset = 2;
+        y1 = As[i] + (2.1 * 1.2) + yOffset
+        y2 = As[i] + (2.1 * 0.85) + yOffset
+        s1 = ("%5.1f" % x)
+        s2 = ("nm")
+        # s1 = ("%d" % i)
+        # s1 = ("%d" % i)
         if (x > pkStart):
-            plt.plot(x, As[i] + 1.05, "kv") # peak marker
-            plt.text(x,y,s,horizontalalignment='center') # peak text
-            plt.text(x,y2,s2,horizontalalignment='center')
+            ax.scatter(x, As[i] + 1.05, s=40, marker="v", facecolors='none', 
+                       edgecolors='#0000a0') # peak marker
+            ax.text(x,y1,s1,horizontalalignment='center') # peak text
+            ax.text(x,y2,s2,horizontalalignment='center')
 
     printPeaks(pkI, aClip, nm, pkStart, pkStop)
 
@@ -212,7 +229,11 @@ for j in range(4):
     labelFont = {'size': 12}
     rc('font', **labelFont)
 
-    plt.annotate("%s\n%d peaks" % (timeStamp,pkI.size), xy=(0.84,0.92),xycoords='axes fraction')
+    # plt.annotate("%s\n%d peaks" % (timeStamp,pkI.size), xy=(0.84,0.92),xycoords='axes fraction')
+    ax.annotate("%s" % (timeStamp), xy=(0.87,0.94),xycoords='axes fraction')
+    ax.grid(visible=True, axis='both', color=(0.5, 0.5, 0.5, 0.2),
+            linestyle='solid', linewidth='0.5')
+
 
     timeStamp = time.strftime("%Y%m%d_%H%M%S", time.localtime())
     fnameOut = os.path.join(outDir, timeStamp + '_spec.csv')
@@ -239,5 +260,3 @@ for j in range(4):
     print("%s , %5.1f, %5.1f, %5.1f" % (fnameOut, minAmp, avgAmp, maxAmp))
 
     time.sleep(0.1)
-
-
