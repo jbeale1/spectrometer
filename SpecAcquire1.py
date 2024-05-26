@@ -1,6 +1,6 @@
 # acquire spectrum from Ocean Optics USB200
-# and find peaks
-# 24-May-2024 J.Beale
+# calculate sample absorption and find peaks
+# 25-May-2024 J.Beale
 
 # https://www.researchgate.net/figure/Fluorescence-spectra-of-chlorophyll-a-l-max-650-nm-and-chlorophyll-b-l-max-670-nm_fig1_272366292
 
@@ -20,14 +20,17 @@ from scipy.signal import find_peaks
 
 import numpy.polynomial.polynomial as poly # fit to calibration curve
 
-outDir = "/home/john/Documents/Spectrometer"  # directory for output data files
-titleString = "USB2000 : 6-inch F4T5-CW fluorescent bulb" # plot title
+# outDir = "/home/john/Documents/Spectrometer"  # directory for output data files
+outDir = r"C:\Users\beale\Documents\OceanSpec\RawData"
 
-integrationTime = 15000 # spectrometer integration time in microseconds
-averages = 400          # how many spectra to average together
-cycles = 5            # total number of datasets to produce
+titleString = "Spectrum" # plot title
 
-boxcar = 1             # boxcar-filter this many adjacent pixels (always odd)
+#integrationTime = 15000 # spectrometer integration time in microseconds
+integrationTime = 8000 # spectrometer integration time in microseconds
+averages = 500          # how many spectra to average together
+cycles = 4            # total number of datasets to produce
+
+boxcar = 5             # boxcar-filter this many adjacent pixels (always odd)
 # xRange = (360, 1000)    # display this range in nm
 
 #yRange = (0, 4200)      # this range in intensity units (12-bit ADC)
@@ -38,8 +41,9 @@ pltHeight = 8
 #  peak-finding parameters
 wSize= 11  # rolling average window size
 pkSearchWin = 41 # array element range, must be odd
-pkStart = 359  # minimum wavelength peak of interest
-pkStop = 1000   # maximum wavelength peak of interest
+pkStart = 365  # min wavelength on graph
+pkStop = 950   # max wavelength on graph
+pkEnd = 830    # don't display any peaks beyond this (nm)
 xRange = (pkStart, pkStop)    # display this range in nm
 
 
@@ -79,51 +83,6 @@ def printPeaks(pkIdx, A, pos, start, stop):
             dCount += 1
     print("Peaks: %d" % dCount)
     
-# ================================================================================    
-# literature values for neon emission (in nm) that a neon bulb can make    
-# "Wavelengths, energy level classifications, and energy levels for the 
-# spectrum of neutral neon" Jan.2004 Journal of Physical and Chemical Reference Data
-neon_nm = np.array([540.05618, 585.24879, 614.30626, 640.2248,
-    667.82762, 703.24131, 724.51666, 837.7608, 878.06226    ])
-
-old_nm = np.array([538.87, 583.99, 613.03, 638.86, 666.37, 701.87,
-                   723.06, 836.29, 876.49 ])
-
-testIdx = np.array([533,668,756,835,920,1031,1098,1467,1603 ])
-
-# Literature values for selected argon emission lines (in nm)
-# https://physics.nist.gov/PhysRefData/Handbook/Tables/argontable2.htm
-argon_nm = np.array([696.5431, 738.3980, 750.3869, 763.5106, 811.5311, 842.4648, 912.2967 ])
-
-# selected mercury emission lines, in nm
-# https://www.rp-photonics.com/standard_spectral_lines.html
-# https://physics.nist.gov/PhysRefData/Handbook/Tables/mercurytable2_a.htm
-mercury_nm  = np.array([365.0153, 404.6563, 435.8328,  546.0735, 576.9598, 579.0663 ])
-mercury_idx = np.array([26, 138,  228, 550,  643, 649])
-
-cal_nm = np.array([365.0153, 404.6563, 435.8328, 540.05618, 546.0735, 585.24879, 614.30626, 640.2248,
-    667.82762, 703.24131, 724.51666, 837.7608, 878.06226    ])
-
-cal_idx = np.array([26, 138, 228, 533, 550, 668,756,835,920,1031,1098,1467,1603 ])
-
-def doPfit(x,y,n):
-    coefs = poly.polyfit(x, y, n)
-    x_new = np.linspace(x[0], x[-1], num=len(x)*500)
-    ffit = poly.polyval(x_new, coefs)
-    plt.plot(x_new, ffit, ".")
-    plt.plot(x,y,"+")
-    eMax = 0 # maximum error
-    for i in range(len(x)):
-        xp = x[i] # original sensor pixel index
-        yp = y[i] # wavelength in nm
-        idx = (np.abs(x_new - xp)).argmin() # index of closest in ffit
-        error = ffit[idx]-yp
-        if abs(error)>abs(eMax):
-            eMax = error
-        print("%d, %d, %5.3f, %5.3f, %3.3f" % (xp, idx, yp, ffit[idx], error))
-    print("Max error magnitude: %5.3f" % eMax)
-    print("coefs: ", coefs)
-    plt.show()
 
 # get array of wavelengths in nm for each sensor pixel
 def get_nm():
@@ -134,98 +93,65 @@ def get_nm():
     nm = poly.polyval(spIdx, coefs)
     return (nm)
 
-# ==================================================================
-# main code starts here
-
-#doPfit(testIdx, neon_nm,3)
-#doPfit(testIdx, old_nm,3)
-#doPfit(cal_idx, cal_nm, 3)
-#exit()
-
-spec = Spectrometer.from_first_available()
-spec.integration_time_micros(integrationTime)
-
-#nm = spec.wavelengths()
-nm = get_nm()
-
-# plt.axis([365,1000,0,4096])
-#plt.ion()
-#plt.show()
-
-print("\nStarting baseline... ",end='')
-baseline = getSpec(int(1+averages/2), boxcar)  # get baseline reference
-print(" done. Running acquisition...")
-
-for j in range(cycles):
-
-    A = getSpec(averages, boxcar) - baseline
-    As = np.sqrt(np.clip(A,0,4095))
-    #plt.clf()  # clear current plot figure
-    
-    if plt.get_fignums(): # empty list is false
-        plt.close()
-
-    fig, ax = plt.subplots()
-
-    timeStamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-    # fig, ax = plt.subplots()
-    # plt.figure(figsize=(pltWidth, pltHeight))
-    fig.set_figheight(pltHeight)
-    fig.set_figwidth(pltWidth)
-    
-
-    minor_locator = AutoMinorLocator(5)
-    ax.xaxis.set_minor_locator(minor_locator)
-
-    ax.set_xlim(xRange)
-    ax.set_ylim(yRange)
-    ax.set_title(titleString)
-    ax.set_xlabel('wavelength, nm')
-    ax.set_ylabel('sqrt(intensity)')
-    ax.plot(nm, As, linewidth=0.6, color='#000080') # show the spectrum plot
-
-
-    # find peaks ============================
-
-
+# find index of peaks in spectrum A
+def getPeaks(A, height, prominence, distance):
     aClip = np.copy(A)
     idxStart = nm.searchsorted(pkStart, 'right') - 1  # last index before nm range of interest
     idxStop = nm.searchsorted(pkStop, 'right')  # first index after nm range of interest
     aClip[0:idxStart] = 0
     aClip[idxStop:] = 0
+    pkI, _ = find_peaks(aClip, height=height, 
+                        prominence=prominence, distance=distance)
+    return (pkI)
 
-    # pkI, _ = find_peaks(aClip, height=2, prominence=8, distance=50)
-    pkI, _ = find_peaks(aClip, height=5, prominence=10, distance=3)
-    # pkI = ppeak2.nonzero()[0]
-    #pk = As[pkI] + 1.05    # offset in graph Y units, to place above spectrum plot line, not on it
-    #nmPk = nm[pkI]
-    # plt.plot(nmPk, pk, "kv")
+# plot signal with labelled peaks ====================
+def plotPeaks(nm, A, pkI, doSqrt, sampleName):
+    if plt.get_fignums(): # empty list is false
+        plt.close()
+
+    if (doSqrt):
+        As = np.sqrt(np.clip(A,0,4095))
+        yLabelText = 'sqrt(intensity)'
+    else:
+        As = A        
+        yLabelText = 'Absorbance (OD)'
+
+    fig, ax = plt.subplots()
+    timeStamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    fig.set_figheight(pltHeight)
+    fig.set_figwidth(pltWidth)
+
+    minor_locator = AutoMinorLocator(5)
+    ax.xaxis.set_minor_locator(minor_locator)
+    ax.set_xlim(xRange)
+    ax.set_title(sampleName)
+    ax.set_xlabel('wavelength, nm')
+    ax.set_ylabel(yLabelText)
+    ax.plot(nm, As, linewidth=0.6, color='#000080') # show the spectrum plot
+
     numFont = {'size': 7}
     rc('font', **numFont)
 
+    yLim = ax.get_ylim()  # actual y limit of axes
+    yLim1 = yLim[1] + 0.05*(yLim[1]-yLim[0]) # a little margin
+    ax.set_ylim(yLim[0], yLim1)
+    yscale = (yLim[1]-yLim[0])/45
     for i in pkI:
         x = nm[i]
-        ym = As[i] + 1.05 # offset in Y units to show maker above spectrum plot line, not on it
+        ym = As[i] + yscale*1.05 # offset in Y units to show maker above spectrum plot line, not on it
         yOffset = 0.2
-        #if (abs(390-i) < 3):
-        #    continue
-        if (abs(577-x) < 1.5):
-            yOffset = 2;
-        y1 = As[i] + (2.1 * 1.2) + yOffset
-        y2 = As[i] + (2.1 * 0.85) + yOffset
-        s1 = ("%5.1f" % x)
-        s2 = ("nm")
-        # s1 = ("%d" % i)
-        # s1 = ("%d" % i)
-        if (x > pkStart):
-            ax.scatter(x, As[i] + 1.05, s=40, marker="v", facecolors='none', 
+        #if (abs(577-x) < 1.5):
+        #    yOffset = 2;
+        y1 = As[i] + yscale * ((2.1 * 1.2) + yOffset)
+        y2 = As[i] + yscale * ((2.1 * 0.82) + yOffset)
+        s1 = ("%5.1f" % x)  # wavelength in nm
+        s2 = ("%d" % i)     # sensor pixel; index number
+        if (x > pkStart) and (x < pkEnd):
+            ax.scatter(x, As[i] + yscale*1.05, s=40, marker="v", facecolors='none', 
                        edgecolors='#0000a0') # peak marker
             ax.text(x,y1,s1,horizontalalignment='center') # peak text
-            ax.text(x,y2,s2,horizontalalignment='center')
+            ax.text(x,y2,s2,horizontalalignment='center') # second line of text
 
-    printPeaks(pkI, aClip, nm, pkStart, pkStop)
-
-    # ==== end find peaks ======================
     labelFont = {'size': 12}
     rc('font', **labelFont)
 
@@ -234,29 +160,72 @@ for j in range(cycles):
     ax.grid(visible=True, axis='both', color=(0.5, 0.5, 0.5, 0.2),
             linestyle='solid', linewidth='0.5')
 
+    plt.draw()
+    plt.pause(0.5)
+
+
+# display basic stats on console
+def showStats(A, label):
+    minAmp = A.min()
+    maxAmp = A.max()
+    avgAmp = A.mean()
+    print("%s , %5.1f, %5.1f, %5.1f" % (label, minAmp, avgAmp, maxAmp))
+
+# save output files and graph image
+def saveData(A,outDir,label):
+    As = np.sqrt(np.clip(A,0,4095))
 
     timeStamp = time.strftime("%Y%m%d_%H%M%S", time.localtime())
-    fnameOut = os.path.join(outDir, timeStamp + '_spec.csv')
-    peakNameOut = os.path.join(outDir, timeStamp + '_peak.csv')
-    plotNameOut = os.path.join(outDir, timeStamp + '_plot.png')
+    fnameOut = os.path.join(outDir, timeStamp + '_spec_' + label + '.csv')
+    peakNameOut = os.path.join(outDir, timeStamp + '_peak_' + label + '.csv')
+    plotNameOut = os.path.join(outDir, timeStamp + '_plot_' + label + '.png')
 
-    #plt.axes().xaxis.set_major_locator(MultipleLocator(50))
-    #plt.axes().xaxis.set_minor_locator(MultipleLocator(5))
-
-    #fig.tight_layout() # call after all axes drawn
-    # plt.tight_layout()
-    plt.savefig(plotNameOut, bbox_inches='tight')
-    plt.draw()
-    plt.pause(0.001)
-    
     df = pd.DataFrame({'nm':nm, 'counts':A, 'cSqrt':As})
     df.to_csv(fnameOut, float_format="%5.2f", sep=',', index=None) # write waveform data
     dfPk = pd.DataFrame({'index':pkI, 'nm':nm[pkI], 'counts':A[pkI]})
     dfPk.to_csv(peakNameOut, float_format="%5.2f", sep=',', index=None) # write peak data
 
-    minAmp = A.min()
-    maxAmp = A.max()
-    avgAmp = A.mean()
-    print("%s , %5.1f, %5.1f, %5.1f" % (fnameOut, minAmp, avgAmp, maxAmp))
+    plt.savefig(plotNameOut, bbox_inches='tight')
+    showStats(A, fnameOut)
+    plt.pause(0.5)
 
-    time.sleep(0.1)
+# =========================================================================================
+#    main code starts here
+# =========================================================================================
+
+spec = Spectrometer.from_first_available()    # assume there's only one Ocean Optics spectrometer
+spec.integration_time_micros(integrationTime)
+
+# nm = spec.wavelengths()  # built-in saved calibration, not necessarily the best accuracy
+nm = get_nm()   # manual calibration
+
+print("\nTaking dark frame... ")
+baseline = getSpec(int(1+averages), boxcar)  # get baseline reference
+input("Insert empty reference and press enter...")
+
+A = getSpec(averages, boxcar) - baseline    
+pkI = getPeaks(A, height=5, prominence=10, distance=3)
+printPeaks(pkI, A, nm, pkStart, pkStop)
+plotPeaks(nm, A, pkI, True, 'input spectrum')
+saveData(A,outDir,'spec')
+
+sampleName = input("Type sample name and press enter...")
+if (sampleName == ''):
+    sampleName = "Sample Absorbance"
+
+B = getSpec(averages, boxcar) - baseline    
+pkI = getPeaks(B, height=5, prominence=10, distance=3)
+plotPeaks(nm, B, pkI, True, "sample spectrum")
+input("Press enter to see absorption...")
+
+RatioP = np.clip(A/B, 0.00001, 100)
+Abs = np.log10(RatioP)
+Abs = np.clip(Abs, -0.05, 10) # don't really expect much below 0
+pkI = getPeaks(Abs, height=.01, prominence=0.001, distance=40)
+printPeaks(pkI, Abs, nm, pkStart, pkStop)
+plotPeaks(nm, Abs, pkI, False, sampleName)
+saveData(Abs,outDir, sampleName)
+
+input("To exit, oddly enough, press enter...")
+
+# time.sleep(2)
