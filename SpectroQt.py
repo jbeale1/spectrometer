@@ -1,24 +1,25 @@
-# Read and display spectrum
+# Read and display data from Ocean Optics spectrometer
 # thanks to:
 # https://stackoverflow.com/questions/12459811/how-to-embed-matplotlib-in-pyqt
 # https://pythonpyqt.com/qtimer/ 
+# https://physics.nist.gov/PhysRefData/Handbook/Tables/mercurytable2_a.htm
 #
-# J.Beale 5/26/2024
+# J.Beale 5/27/2024
 
 import sys
-from PyQt5.QtWidgets import QDialog, QApplication, QPushButton, QVBoxLayout
-from PyQt5.QtWidgets import QWidget,QListWidget,QInputDialog,QGridLayout,QLabel
+from PyQt5.QtWidgets import QDialog, QApplication, QPushButton, QVBoxLayout, QHBoxLayout,QSizePolicy
+from PyQt5.QtWidgets import QWidget,QListWidget,QInputDialog,QLabel
 from PyQt5.QtCore import QSize,QTimer,QDateTime
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 import matplotlib.pyplot as plt
-from matplotlib.ticker import AutoMinorLocator
+from matplotlib.ticker import AutoMinorLocator, MultipleLocator
+from matplotlib import rc
 from seabreeze.spectrometers import Spectrometer
 import bottleneck as bn  # boxcar filter
 from scipy.signal import find_peaks
 
-import random
 import numpy as np
 import numpy.polynomial.polynomial as poly # fit to calibration curve
 
@@ -43,7 +44,7 @@ def getPeaks(A, pkStart, pkStop, height, prominence, distance):
     return (pkI)
 
 # display peak location
-def printPeaks(pkIdx, A, pos, start, stop):
+def printPeaks(pkIdx, A, pos, start, stop, refSet):
     dCount = 0
     current_time=QDateTime.currentDateTime()
     tstamp = current_time.toString('yy-MM-dd hh:mm:ss')
@@ -51,32 +52,76 @@ def printPeaks(pkIdx, A, pos, start, stop):
     for i in pkIdx:  # display position of peaks in nm
         pk = pos[i]
         amp = A[i]
+        if refSet:
+            units = "OD"
+        else:            
+            units = "counts"
         if (pk >= start) and (pk <= stop):
-            print("%s  %d : %5.3f nm  %5.3f counts" % (tstamp, i,pk, amp))
+            print("%s  %d : %5.3f nm  %5.3f %s" % (tstamp, i,pk, amp, units))
             dCount += 1
     # print("Peaks: %d" % dCount)
+
+# plot signal with labelled peaks ====================
+def plotPeaks(fig, ax, nm, A, pkI):
+
+    #fig, ax = plt.subplots()    
+    current_time=QDateTime.currentDateTime()
+    timeStamp=current_time.toString('yyyy-MM-dd hh:mm:ss')
+
+    numFont = {'size': 7}
+    rc('font', **numFont)
+
+    yLim = ax.get_ylim()  # actual y limit of axes
+    yLim1 = yLim[1] + 0.05*(yLim[1]-yLim[0]) # a little margin
+    ax.set_ylim(yLim[0], yLim1)
+    yscale = (yLim[1]-yLim[0])/45
+    for i in pkI:
+        x = nm[i]
+        ym = A[i] + yscale*1.05 # offset in Y units to show maker above spectrum plot line, not on it
+        yOffset = 0.2
+        #if (abs(577-x) < 1.5):
+        #    yOffset = 2;
+        y1 = A[i] + yscale * ((2.1 * 1.4) + yOffset)
+        y2 = A[i] + yscale * ((2.1 * 0.82) + yOffset)
+        s1 = ("%5.1f" % x)  # wavelength in nm
+        s2 = ("%d" % i)     # sensor pixel; index number
+        if (x > pkStart) and (x < pkStop):
+            ax.scatter(x, A[i] + yscale*1.05, s=40, marker="v", facecolors='none', 
+                       edgecolors='#0000a0') # peak marker
+            ax.text(x,y1,s1,horizontalalignment='center') # peak text
+            ax.text(x,y2,s2,horizontalalignment='center') # second line of text
+
+    labelFont = {'size': 12}
+    rc('font', **labelFont)
+
+    if (pkI.size > 0):
+        j = np.argmax(A[pkI])
+        pkAmp = A[pkI[j]]   # amplitude of largest peak
+        pknm = nm[pkI[j]]   # position of peak in nm
+        plt.annotate("%s\n%5.1f nm  (%5.1f)" % (timeStamp,pknm,pkAmp), xy=(0.84,0.88),xycoords='axes fraction')
+    else:
+        plt.annotate("%s" % (timeStamp), xy=(0.84,0.92),xycoords='axes fraction')                
+    # ax.annotate("%s" % (timeStamp), xy=(0.87,0.94),xycoords='axes fraction')
+    ax.grid(visible=True, axis='both', color=(0.5, 0.5, 0.5, 0.2),
+            linestyle='solid', linewidth='0.5')
+
+# ================================================================================
 
 class Window(QDialog):
 
     def __init__(self, parent=None):
         super(Window, self).__init__(parent)
         self.setWindowTitle("SpectroQt")
-        self.setMinimumSize(QSize(1500, 500))
+        self.setMinimumSize(QSize(1500, 700))
+        self.sampleName = ""
 
-        # a figure instance to plot on
-        self.figure = plt.figure()
-
-        # this is the Canvas Widget that displays the `figure`
-        # it takes the `figure` instance as a parameter to __init__
+        self.figure = plt.figure() # a figure instance to plot on
         self.canvas = FigureCanvas(self.figure)
-
-        # this is the Navigation widget
-        # it takes the Canvas widget and a parent
         self.toolbar = NavigationToolbar(self.canvas, self)
 
         self.doScan = QPushButton('1-Scan')
         self.doScan.clicked.connect(self.plot)
-        self.doBase = QPushButton('Baseline')
+        self.doBase = QPushButton('Dark Frame')
         self.doBase.clicked.connect(self.doBaseline)
         self.bRef = QPushButton('Blank-Ref')
         self.bRef.clicked.connect(self.doSetReference)
@@ -84,7 +129,7 @@ class Window(QDialog):
         self.Reset.clicked.connect(self.doReset)
 
         self.startBt=QPushButton('Start')
-        self.startBt.clicked.connect(self.startTimer)
+        self.startBt.clicked.connect(self.startTimer)        
         self.endBtn=QPushButton('Stop')
         self.endBtn.clicked.connect(self.endTimer)
         self.yScaleA=QPushButton('Y rescale')
@@ -93,30 +138,36 @@ class Window(QDialog):
         self.setExp.clicked.connect(self.setExposure)
         self.setPk=QPushButton('Peaks')
         self.setPk.clicked.connect(self.togglePeaks)
-
-        #self.set = QLineEdit()
+        self.setName=QPushButton('sName')
+        self.setName.clicked.connect(self.enterName)
 
         self.header=QLabel('Spectrometer App')
         self.status=QLabel('Scan Paused')
+        self.status.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
 
-        # set the layout
-        #layout = QVBoxLayout()
-        layout=QGridLayout()
+        btn1Layout = QHBoxLayout()  # a row of buttons
+        btn1Layout.addWidget(self.startBt)
+        btn1Layout.addWidget(self.endBtn)
+        btn1Layout.addWidget(self.doScan)
+        btn1Layout.addWidget(self.doBase)
+        btn1Layout.addWidget(self.bRef)
+        btn1Layout.addWidget(self.Reset)
+        btn1Layout.addWidget(self.yScaleA)
+        btn1Layout.addWidget(self.setExp)
+        btn1Layout.addWidget(self.setPk)
+        btn1Layout.addWidget(self.setName)
+        
 
-        layout.addWidget(self.header, 0,0)
-        layout.addWidget(self.status, 0,1,1,1)
-        layout.addWidget(self.toolbar,1,0)
-        layout.addWidget(self.canvas, 2,0,5,9) # main plot goes here
-        layout.addWidget(self.startBt,7,0,1,1)
-        layout.addWidget(self.endBtn, 7,1,1,1)
-        layout.addWidget(self.doScan, 7,2,1,1)
-        layout.addWidget(self.doBase, 7,3,1,1)
-        layout.addWidget(self.bRef,   7,4,1,1)
-        layout.addWidget(self.Reset,  7,5,1,1)
-        layout.addWidget(self.yScaleA,7,6,1,1)
-        layout.addWidget(self.setExp, 7,7,1,1)
-        layout.addWidget(self.setPk,  7,8,1,1)
-
+        hdrLayout = QHBoxLayout()  # header row
+        hdrLayout.addWidget(self.toolbar)
+        hdrLayout.addWidget(self.status) # current program status      
+        # without size policy, QLabel will expand, instead of graph canvas      
+        self.status.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        
+        layout = QVBoxLayout()
+        layout.addLayout(hdrLayout)
+        layout.addWidget(self.canvas)
+        layout.addLayout(btn1Layout)
         self.setLayout(layout)
 
         self.timer=QTimer()
@@ -125,16 +176,14 @@ class Window(QDialog):
         self.exposure_ms = 8.0 # spectrometer integration time in milliseconds        
         self.spec = Spectrometer.from_first_available()    # only one Ocean Optics spectrometer?
         self.spec.integration_time_micros(int(self.exposure_ms * 1000))
-        self.averages = 100  # how many scans to average together
+        self.averages = 20  # how many scans to average together
         self.boxcar = 5    # total adjacent pixels to boxcar-average (must be odd)        
-        self.yRange = (0,specSensorMaxVal)  # vertical scaling of plot
-        self.xRange = (365,900)  # horizontal axis range in nm
+        self.doReset()       # reset various parameters to intensity, not absorption mode
+        self.xRange = (360,1000)  # horizontal axis range in nm
         self.baseline = np.zeros(specSensorPixels)
         self.blankRef = np.zeros(specSensorPixels)
-        self.refSet = False  # haven't taken a blank reference yet
-        self.yLabelText = 'intensity (counts)'
-
-        self.showPeaks = False
+        self.showPeaks = True
+        self.plot()  # draw the first plot
 
     # replace all NaN values with 0
     def rmN(self, A):
@@ -163,33 +212,47 @@ class Window(QDialog):
     def drawPlot(self):
         self.figure.clear()
         self.ax = self.figure.add_subplot(111)
+        self.figure.subplots_adjust(left=0.07, right=0.97, top=0.9, bottom=0.1)
         self.ax.plot(nm, self.A)
         self.ax.grid('both')
         self.ax.set_ylim(self.yRange)
         self.ax.set_xlim(self.xRange)
         self.ax.set_ylabel(self.yLabelText)
-        self.ax.set_xlabel("nm")
+        self.ax.set_xlabel("wavelength  nm")
+        self.ax.xaxis.set_major_locator(MultipleLocator(50))
         minor_locator = AutoMinorLocator(5)
         self.ax.xaxis.set_minor_locator(minor_locator)
+        self.ax.set_title(self.sampleName)
+        if (self.showPeaks):
+            plotPeaks(self.figure, self.ax, nm, self.A, self.pkI)
 
         self.canvas.draw() # display graph on Qt canvas 
 
     def plot(self):
         ''' display spectrum data on Qt canvas '''
+        
+        self.status.setText("Running...")        
+        self.status.update
         self.A = self.getSpec(self.averages, self.boxcar)
 
         if (self.refSet):
             self.A = np.clip(self.A,0.00001,4095)
             ratio = np.clip((self.blankRef/self.A),0.00001,1000)
             self.A = np.log10(ratio)
-        self.drawPlot()
         if (self.showPeaks):
             self.doPeaks()
+        self.drawPlot()
+        current_time=QDateTime.currentDateTime()
+        tString=current_time.toString('yyyy-MM-dd hh:mm:ss')
+        statusString = ("t=%d ms  %s" % (self.exposure_ms, tString ))
+        self.status.setText(statusString)        
 
     # set the sensor baseline (dark frame). All values should be on [0,4095] interval
     def doBaseline(self):
         self.baseline = np.zeros(specSensorPixels)
         self.baseline = self.getSpec(self.averages, self.boxcar)
+        self.plot()  # do another acquisition to refresh plot with new baseline
+
 
     # get reference spectrum, switch to displaying absorbance in OD
     def doSetReference(self):
@@ -199,15 +262,26 @@ class Window(QDialog):
         self.refSet = True
         self.yRange = (0, 2.5)  # appropriate units for density
         self.yLabelText = 'Absorbance (OD)'
+        self.pkHeight=.01
+        self.pkProminence=0.001
+        self.pkDistance=40
+
 
     # exit absorption mode, return to normal spectrum intensity
     def doReset(self):
         self.refSet = False
         self.yRange = (0,specSensorMaxVal)  # reset vertical scaling of plot
         self.yLabelText = 'intensity (counts)'
+        self.pkHeight=5  # peak finding parameters in amplitude mode
+        self.pkProminence=10
+        self.pkDistance=10
 
-    def yRescale(self):               
-        yTop = np.max( self.filt(self.A, 15) ) * 1.1
+
+    def yRescale(self):            
+        if (self.refSet):
+            yTop = np.max( self.filt(self.A, 15) ) * 1.1
+        else:            
+            yTop = np.max( self.A ) * 1.1
         self.yRange = (0,yTop)  # reset Y axis range        
         self.drawPlot()
 
@@ -217,10 +291,16 @@ class Window(QDialog):
         if done1:
             exp = np.clip(exp,3,10000)  # USB2000 minimum exp. is 3 msec
             self.exposure_ms = exp
-            self.spec.integration_time_micros(int(self.exposure_ms * 1000))            
+            self.spec.integration_time_micros(int(self.exposure_ms * 1000))   
+
+    def enterName(self):
+        self.sampleName, done1 = QInputDialog.getText(
+            self, 'Enter Sample Name', 'Sample name:') 
+
     def doPeaks(self):
-        pkI = getPeaks(self.A, pkStart, pkStop, pkHeight, pkProminence, pkDistance)
-        printPeaks(pkI, self.A, nm, pkStart, pkStop)
+        self.pkI = getPeaks(self.A, pkStart, pkStop,
+                       self.pkHeight, self.pkProminence, self.pkDistance)
+        printPeaks(self.pkI, self.A, nm, pkStart, pkStop, self.refSet)
 
     def togglePeaks(self):
         self.showPeaks = not self.showPeaks
@@ -249,9 +329,9 @@ if __name__ == '__main__':
     # set gobal vars related to spectrometer sensor hardware
     specSensorPixels = 2048  # count of sensor pixels
     specSensorMaxVal = 4095  # max possible 12-bit sensor value
-    pkStart=375 # find no peaks below this
-    pkStop=780  # find no peaks above this
-    pkHeight=5  # peak finding parameters
+    pkStart=360 # find no peaks below this
+    pkStop=1000  # find no peaks above this
+    pkHeight=5  # peak finding parameters in amplitude mode
     pkProminence=10
     pkDistance=10
 
