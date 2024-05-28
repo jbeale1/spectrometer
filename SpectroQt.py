@@ -281,13 +281,13 @@ class Window(QDialog):
                          self.exposure_ms, self.averages, self.boxcar, self.tString))
             self.status.setText(statusString)        
 
-
-        if (self.refSet):
-            self.A = np.clip(self.A,0.00001,4095)
-            ratio = np.clip((self.blankRef/self.A),0.00001,1000)
-            self.A = np.log10(ratio)
-        if (self.showPeaks):
-            self.doPeaks()
+            if (self.refSet):
+                self.A = np.clip(self.A,0.00001,4095)
+                ratio = np.clip((self.blankRef/self.A),0.00001,1000)
+                self.A = np.log10(ratio)
+            if (self.showPeaks):
+                self.doPeaks()
+                
         self.drawPlot(self.tString)
 
     # set the sensor baseline (dark frame). All values should be on [0,4095] interval
@@ -368,7 +368,7 @@ class Window(QDialog):
         formatted_time=current_time.toString('yyyy-MM-dd hh:mm:ss')
         self.timestamp = current_time.toString('yyyyMMdd_hhmmss')
         self.status.setText(formatted_time)
-        self.plot(True)
+        self.plot1()
 
     def startTimer(self):
         # calculate how much time to acquire and display one frame
