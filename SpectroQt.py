@@ -89,7 +89,7 @@ def printPeaks(pkIdx, A, pos, start, stop, refSet):
     # print("Peaks: %d" % dCount)
 
 # plot signal with labelled peaks ====================
-def plotPeaks(fig, ax, nm, A, pkI, pkStart, pkStop, timeStamp, absMode):
+def plotPeaks(fig, ax, nm, A, pkI, pkStart, pkStop, timeStamp, notes, absMode):
 
     #fig, ax = plt.subplots()    
     #current_time=QDateTime.currentDateTime()
@@ -119,7 +119,11 @@ def plotPeaks(fig, ax, nm, A, pkI, pkStart, pkStop, timeStamp, absMode):
             ax.scatter(x, A[i] + yscale*1.05, s=40, marker="v", facecolors='none', 
                        edgecolors='#0000a0') # peak marker
             ax.text(x,y1,s1,horizontalalignment='center') # peak text
-            ax.text(x,y2,s2,horizontalalignment='center') # second line of text
+            ax.text(x,y2,s2,horizontalalignment='center') # second line of text            
+
+    labelFont = {'size': 8}
+    rc('font', **labelFont)
+    plt.annotate("%s" % (notes), xy=(0.74,-0.090),xycoords='axes fraction')
 
     labelFont = {'size': 12}
     rc('font', **labelFont)
@@ -132,8 +136,9 @@ def plotPeaks(fig, ax, nm, A, pkI, pkStart, pkStop, timeStamp, absMode):
     else:
         plt.annotate("%s" % (timeStamp), xy=(0.84,0.92),xycoords='axes fraction')                
     # ax.annotate("%s" % (timeStamp), xy=(0.87,0.94),xycoords='axes fraction')
+
     ax.grid(visible=True, axis='both', color=(0.5, 0.5, 0.5, 0.2),
-            linestyle='solid', linewidth='0.5')
+            linestyle='solid', linewidth='0.25')
 
 # save output files and graph image
 def saveData(A,pkI,nm,outDir,labelRaw,timeStamp):
@@ -147,9 +152,9 @@ def saveData(A,pkI,nm,outDir,labelRaw,timeStamp):
     plotNameOut = os.path.join(outDir, timeStamp + '_plot_' + label + '.png')
 
     df = pd.DataFrame({'nm':nm, 'counts':A})
-    df.to_csv(fnameOut, float_format="%5.2f", sep=',', index=None) # write waveform data
+    df.to_csv(fnameOut, float_format="%7.4f", sep=',', index=None) # write waveform data
     dfPk = pd.DataFrame({'index':pkI, 'nm':nm[pkI], 'counts':A[pkI]})
-    dfPk.to_csv(peakNameOut, float_format="%5.2f", sep=',', index=None) # write peak data
+    dfPk.to_csv(peakNameOut, float_format="%7.4f", sep=',', index=None) # write peak data
     plt.savefig(plotNameOut, bbox_inches='tight')
 
     print("Saved %s" % fnameOut)
@@ -255,6 +260,7 @@ class Window(QDialog):
         self.dfP = pd.DataFrame(data)
         self.dfP.index = paramList # use names for row index, not just the default numbers
         self.paramWin = ParamEditor(self.dfP)
+        self.statusString = "standby"  # instrument params displayed on plot
         # self.paramWin.show()
         # ============================
 
@@ -327,9 +333,9 @@ class Window(QDialog):
         self.ax.plot(nm, self.A)            
         self.pkStart = float(self.dfP.loc[['peakStart']].values[0][1] )
         self.pkStop = float(self.dfP.loc[['peakStop']].values[0][1] )
-
         if (self.showPeaks):
-            plotPeaks(self.figure, self.ax, nm, self.A, self.pkI, self.pkStart, self.pkStop, tstring, self.absMode)
+            plotPeaks(self.figure, self.ax, nm, self.A, self.pkI, self.pkStart, 
+                      self.pkStop, tstring, self.statusString, self.absMode)
 
         self.canvas.draw() # display graph on Qt canvas 
 
@@ -354,10 +360,10 @@ class Window(QDialog):
                 ovString = '-'                
             current_time=QDateTime.currentDateTime() # update timestamp display
             self.tString=current_time.toString('yyyy-MM-dd hh:mm:ss')
-            statusString = (" (%d-%d) %s %s t=%dms av=%d sm=%d : %s" % 
+            self.statusString = (" (%d-%d) %s %s t=%dms av=%d sm=%d : %s" % 
                         (self.xRange[0], self.xRange[1], modeString, ovString,
                          self.exposure_ms, self.averages, self.boxcar, self.tString))
-            self.status.setText(statusString)        
+            self.status.setText(self.statusString)        
 
             if (self.absMode):
                 self.A = np.clip(self.A,0.00001,4095)
