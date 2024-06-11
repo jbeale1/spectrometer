@@ -4,7 +4,7 @@
 # https://pythonpyqt.com/qtimer/ 
 # https://physics.nist.gov/PhysRefData/Handbook/Tables/mercurytable2_a.htm
 #
-# J.Beale 6/2/2024
+# J.Beale 6/10/2024
 
 import sys, os
 from PyQt5.QtWidgets import QDialog, QApplication, QPushButton, QVBoxLayout, QHBoxLayout,QSizePolicy
@@ -89,7 +89,7 @@ def printPeaks(pkIdx, A, pos, start, stop, refSet):
     # print("Peaks: %d" % dCount)
 
 # plot signal with labelled peaks ====================
-def plotPeaks(fig, ax, nm, A, pkI, pkStart, pkStop, timeStamp, notes, absMode):
+def plotData(fig, ax, nm, A, pkI, pkStart, pkStop, timeStamp, notes, absMode, labelPeaks, overlay):
 
     #fig, ax = plt.subplots()    
     #current_time=QDateTime.currentDateTime()
@@ -102,25 +102,30 @@ def plotPeaks(fig, ax, nm, A, pkI, pkStart, pkStop, timeStamp, notes, absMode):
     yLim1 = yLim[1] + 0.05*(yLim[1]-yLim[0]) # a little margin
     ax.set_ylim(yLim[0], yLim1)
     yscale = (yLim[1]-yLim[0])/45
-    for i in pkI:
-        x = nm[i]
-        ym = A[i] + yscale*1.05 # offset in Y units to show maker above spectrum plot line, not on it
-        yOffset = 0.2
-        #if (abs(577-x) < 1.5):
-        #    yOffset = 2;
-        y1 = A[i] + yscale * ((2.1 * 1.4) + yOffset)
-        y2 = A[i] + yscale * ((2.1 * 0.82) + yOffset)
-        s1 = ("%5.1f" % x)  # wavelength in nm
-        if (absMode):
-            s2 = ("%5.2f" % A[i])     # sensor pixel value
-        else:
-            s2 = ("%5.1f" % A[i])            
-        if (x > pkStart) and (x < pkStop):
-            ax.scatter(x, A[i] + yscale*1.05, s=40, marker="v", facecolors='none', 
-                       edgecolors='#0000a0') # peak marker
-            ax.text(x,y1,s1,horizontalalignment='center') # peak text
-            ax.text(x,y2,s2,horizontalalignment='center') # second line of text            
+    if (labelPeaks and (not overlay)):
+        for i in pkI:
+            x = nm[i]
+            ym = A[i] + yscale*1.05 # offset in Y units to show maker above spectrum plot line, not on it
+            yOffset = 0.2
+            #if (abs(577-x) < 1.5):
+            #    yOffset = 2;
+            y1 = A[i] + yscale * ((2.1 * 1.4) + yOffset)
+            y2 = A[i] + yscale * ((2.1 * 0.82) + yOffset)
+            s1 = ("%5.1f" % x)  # wavelength in nm
+            if (absMode):
+                s2 = ("%5.2f" % A[i])     # sensor pixel value
+            else:
+                s2 = ("%5.1f" % A[i])            
+            if (x > pkStart) and (x < pkStop):
+                ax.scatter(x, A[i] + yscale*1.05, s=40, marker="v", facecolors='none', 
+                        edgecolors='#0000a0') # peak marker
+                ax.text(x,y1,s1,horizontalalignment='center') # peak text
+                ax.text(x,y2,s2,horizontalalignment='center') # second line of text            
 
+    if (overlay):  # skip the labels if overlay mode is on
+        return
+    
+    # show settings in smaller font at bottom edge of graph
     labelFont = {'size': 8}
     rc('font', **labelFont)
     plt.annotate("%s" % (notes), xy=(0.74,-0.090),xycoords='axes fraction')
@@ -301,7 +306,8 @@ class Window(QDialog):
             self.figure.clear()
             self.ax = self.figure.add_subplot(111)
             self.figure.subplots_adjust(left=0.07, right=0.97, top=0.9, bottom=0.1)
-            
+
+        if (True):            
             self.ax.grid('both')
             if (self.absMode):
                 self.ax.set_ylim(self.yRange)
@@ -332,10 +338,9 @@ class Window(QDialog):
 
         self.ax.plot(nm, self.A)            
         self.pkStart = float(self.dfP.loc[['peakStart']].values[0][1] )
-        self.pkStop = float(self.dfP.loc[['peakStop']].values[0][1] )
-        if (self.showPeaks):
-            plotPeaks(self.figure, self.ax, nm, self.A, self.pkI, self.pkStart, 
-                      self.pkStop, tstring, self.statusString, self.absMode)
+        self.pkStop = float(self.dfP.loc[['peakStop']].values[0][1] )        
+        plotData(self.figure, self.ax, nm, self.A, self.pkI, self.pkStart, 
+                      self.pkStop, tstring, self.statusString, self.absMode, self.showPeaks, self.overlay)
 
         self.canvas.draw() # display graph on Qt canvas 
 
