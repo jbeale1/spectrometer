@@ -1,3 +1,4 @@
+
 # Read and display data from Ocean Optics spectrometer
 # thanks to:
 # https://stackoverflow.com/questions/12459811/how-to-embed-matplotlib-in-pyqt
@@ -66,6 +67,7 @@ def getPeaks(A, pkStart, pkStop, height, prominence, distance):
     idxStop = nm.searchsorted(pkStop, 'right')  # first index after nm range of interest
     aClip[0:idxStart] = 0
     aClip[idxStop:] = 0
+    # scipy.signal.find_peaks()
     pkI, _ = find_peaks(aClip, height=height, 
                         prominence=prominence, distance=distance)
     return (pkI)
@@ -73,9 +75,18 @@ def getPeaks(A, pkStart, pkStop, height, prominence, distance):
 # display peak location
 def printPeaks(pkIdx, A, pos, start, stop, refSet):
     dCount = 0
+    FWHM = 0
     current_time=QDateTime.currentDateTime()
     tstamp = current_time.toString('yy-MM-dd hh:mm:ss')
 
+    iStart = np.argmax(pos>=start) # starting index for peaks of interest
+    iEnd = np.argmax(pos>stop)  # ending index for peaks of interest
+    avgVal = np.mean(A[iStart:iEnd])  # overall average in range of interest
+    # print(iStart, iEnd, pos[iStart], pos[iEnd], start, stop) # DEBUG
+
+    halfBW = 50     # half of full-width peak band region (nm)
+    maxAmp = -1E99  # maximum amplitude seen so far
+    maxIdx = -1      # index of max amp
     for i in pkIdx:  # display position of peaks in nm
         pk = pos[i]
         amp = A[i]
@@ -84,12 +95,37 @@ def printPeaks(pkIdx, A, pos, start, stop, refSet):
         else:            
             units = "counts"
         if (pk >= start) and (pk <= stop):
+            if (amp > maxAmp):
+                maxAmp = amp    # track maximum amplitude so far
+                maxIdx = i
             print("%s  %d : %5.3f nm  %5.3f %s" % (tstamp, i,pk, amp, units))
             dCount += 1
+    if (maxIdx > -1):         # if we have found a peak at all:
+        idxBmin = np.argmax(pos>=(pos[maxIdx]-halfBW))
+        idxBmin = max(idxBmin,iStart)
+        idxBmax = np.argmax(pos>(pos[maxIdx]+halfBW))
+        idxBmax = min(idxBmax, iEnd)
+        PBW = np.mean(A[idxBmin:idxBmax])
+        Poutside = np.mean(A[np.r_[iStart:idxBmin,idxBmax:iEnd]]) # out-of-band average signal
+        pkRatio = maxAmp / Poutside  # ratio of peak amplitude to average level outside +/- halfBW around peak
+        # print("Overall peak: %5.2f %s at %5.2f nm (Pk/Av ratio: %5.1f)" % (maxAmp, units, pos[maxIdx], pkRatio))
+        if (pkRatio > 10): # apparently have one dominant peak
+            hiHPidx = maxIdx + np.argmax(A[maxIdx:]<(maxAmp/2.0)) # index of upper half-peak point
+            tmpA = A[:maxIdx]
+            tmpB = tmpA[::-1]
+            loHPidx = maxIdx - np.argmax(tmpB<(maxAmp/2.0)) # index of lower half-peak point
+            dLo = pos[maxIdx] - pos[loHPidx]
+            dHi = pos[hiHPidx] - pos[maxIdx]
+            FWHM = dLo + dHi
+            print("-%.1f +%.1f FWHM: %5.1f nm" % (dLo, dHi, FWHM))
+
+        #print("%d,%d,  %5.1f, %5.1f, %5.2f, %5.2f" % 
+        #      (idxBmin, idxBmax, pos[idxBmin], pos[idxBmax], PBW, Poutside))
     # print("Peaks: %d" % dCount)
+    return(FWHM)
 
 # plot signal with labelled peaks ====================
-def plotData(fig, ax, nm, A, pkI, pkStart, pkStop, timeStamp, notes, absMode, labelPeaks, overlay):
+def plotData(fig, ax, nm, A, pkI, pkFWHM, pkStart, pkStop, timeStamp, notes, absMode, labelPeaks, overlay):
 
     #fig, ax = plt.subplots()    
     #current_time=QDateTime.currentDateTime()
@@ -137,9 +173,9 @@ def plotData(fig, ax, nm, A, pkI, pkStart, pkStop, timeStamp, notes, absMode, la
         j = np.argmax(A[pkI])
         pkAmp = A[pkI[j]]   # amplitude of largest peak
         pknm = nm[pkI[j]]   # position of peak in nm
-        plt.annotate("%s\n%5.1f nm  (%5.1f)" % (timeStamp,pknm,pkAmp), xy=(0.84,0.88),xycoords='axes fraction')
+        plt.annotate("%s\n%5.1f (%.1f)nm  %5.1f" % (timeStamp,pknm,pkFWHM,pkAmp), xy=(0.82,0.88),xycoords='axes fraction')
     else:
-        plt.annotate("%s" % (timeStamp), xy=(0.84,0.92),xycoords='axes fraction')                
+        plt.annotate("%s" % (timeStamp), xy=(0.82,0.92),xycoords='axes fraction')                
     # ax.annotate("%s" % (timeStamp), xy=(0.87,0.94),xycoords='axes fraction')
 
     ax.grid(visible=True, axis='both', color=(0.5, 0.5, 0.5, 0.2),
@@ -299,6 +335,7 @@ class Window(QDialog):
         self.tString=qtime.toString('yyyy-MM-dd hh:mm:ss')
         self.absMode = False
         self.overlay = False
+        self.FWHM = 0  # width of dominant peak, in nm
         self.plot(True)  # draw the first plot
 
     def drawPlot(self,tstring):
@@ -339,7 +376,7 @@ class Window(QDialog):
         self.ax.plot(nm, self.A)            
         self.pkStart = float(self.dfP.loc[['peakStart']].values[0][1] )
         self.pkStop = float(self.dfP.loc[['peakStop']].values[0][1] )        
-        plotData(self.figure, self.ax, nm, self.A, self.pkI, self.pkStart, 
+        plotData(self.figure, self.ax, nm, self.A, self.pkI, self.FWHM, self.pkStart, 
                       self.pkStop, tstring, self.statusString, self.absMode, self.showPeaks, self.overlay)
 
         self.canvas.draw() # display graph on Qt canvas 
@@ -450,7 +487,8 @@ class Window(QDialog):
     def doPeaks(self):
         self.pkI = getPeaks(self.A, pkStart, pkStop,
                        self.pkHeight, self.pkProminence, self.pkDistance)
-        printPeaks(self.pkI, self.A, nm, pkStart, pkStop, self.refSet)
+        # now, pkI is an array of indexes of peak values in A[]
+        self.FWHM = printPeaks(self.pkI, self.A, nm, pkStart, pkStop, self.refSet)
 
     def togglePeaks(self):
         self.showPeaks = not self.showPeaks
@@ -494,7 +532,7 @@ if __name__ == '__main__':
     specSensorMaxVal = 4095  # max possible 12-bit sensor value
     pkStart=380 # find no peaks below this
     pkStop=710  # find no peaks above this
-    pkStop=1000  # find no peaks above this
+    pkStop=800  # find no peaks above this
     scanMin=360  # displayed plot range in nm
     scanMax=1000
     pkHeight=5  # peak finding parameters in amplitude mode
